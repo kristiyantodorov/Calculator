@@ -7,12 +7,92 @@ int main() {
 	signal(10, notify_disconn);
 	signal(16, notify_server_disconn);
 	init_shm();
+	init_sem();
 	connected();
 	return EXIT_SUCCESS;
 }
 
 void read_from_shm() {
-	printf("%s\n", shm_p);
+	printf("%s", shm_p);
+}
+
+void init_sem() {
+	printf("pid = %d\n", getpid());
+	sprintf(sem_name, "%d", getpid());
+	sem = sem_open(sem_name, O_CREAT, 777, 0);
+}
+
+void monitor_mode() {
+	puts("Monitoring... Type 'r' to exit");
+	char c;
+	if (pthread_create(&mon_th, NULL, mon_func, 0)) {
+		perror("Could not create thread");
+		return;
+	}
+	pthread_detach(mon_th);
+
+	scanf("%c", &c);
+	while(c != 'r') {
+		puts("Wrong input");
+		scanf("%c", &c);
+	}
+	puts("Enter m for monitoring, c for calculator, or Ctrl+C to quit");
+	return;
+}
+
+void* mon_func(void* arg) {
+	while (1) {
+		sem_wait(sem);
+		read_from_shm();
+	}
+}
+
+//not defined in header
+void calc_func() {
+	Result res = RESULT__INIT;
+	char operation[2];
+	float left = 0,
+	right;
+	uint8_t r_buf[1024];
+	ssize_t r_len;
+	printf("You can begin calculation or return to the menu by typing 'r' instead of operator\n");
+	printf("= %f\n", left);
+	scanf("%s", operation);
+	scanf("%f", &right);
+	if (operation[0] == 'r') {
+		return;
+	}
+	// Zero division check
+	if (operation[0] == '/' && right == 0) {
+		do {
+			puts("Cannot divide by 0... Enter different number");
+			scanf("%f", &right);
+		} while (right == 0 && operation[0] == '/');
+	}
+	serialize(left, right, operation, pid);
+
+	while ((send(sock, buf, calc_len, 0))) {
+		r_len = recv(sock, r_buf, 1024, 0);
+		left = deserialize(&res, r_len, r_buf);
+		printf("= %f\n", left);
+		scanf("%s", operation);
+		if (operation[0] == 'r') {
+			puts("Enter m for monitoring, c for calculator, or Ctrl+C to quit");
+			return;
+		}
+		scanf("%f", &right);
+
+		// Zero division check
+		if (operation[0] == '/' && right == 0) {
+			do {
+				puts("Cannot divide by 0... Enter different number");
+				scanf("%f", &right);
+			} while (right == 0);
+		}
+
+		serialize(left, right, operation, pid);
+	}
+	return;
 }
 
 void init_shm() {
@@ -52,7 +132,7 @@ void serialize(float l, float r, const char* op, int pid) {
 // Uses the recieved buffer to get result information
 float deserialize(Result* res, ssize_t res_len, uint8_t* res_buf) {
 	res = result__unpack(NULL, res_len, res_buf);
-	if(res == NULL) {
+	if (res == NULL) {
 		fprintf(stderr, "error unpacking incoming message\n");
 		exit(1);
 	}
@@ -63,17 +143,11 @@ float deserialize(Result* res, ssize_t res_len, uint8_t* res_buf) {
 }
 
 void connected() {
-	Result res = RESULT__INIT;
+	int running = 1;
 	struct sockaddr_in server;
-	char operation[2];
-	float left = 0, right;
-	uint8_t r_buf[1024];
-	ssize_t r_len;
-	pid = getpid();
-	printf("You can begin calculation or review the server log by typing 'l' instead of operator\n");
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
-	if(sock == -1) {
+	if (sock == -1) {
 		printf("Could not create socket\n");
 	}
 	puts("Socket created");
@@ -82,55 +156,24 @@ void connected() {
 	server.sin_addr.s_addr = inet_addr("10.185.21.117");
 	server.sin_port = htons(8888);
 
-	while( (connect(sock, (struct sockaddr*) &server, sizeof(server))) < 0 ) {
+	while ((connect(sock, (struct sockaddr*) &server, sizeof(server))) < 0) {
 		puts("Error connecting to server... Reconnecting");
 		sleep(3);
 	}
 	puts("Connected\n");
-
-	printf("= %f\n", left);
-	scanf("%s", operation);
-	if( strcmp("l", operation) == 0 ) {
-		printf("Here is the server log:\n");
-		read_from_shm();
-		printf("= %f\n", left);
-		scanf("%s", operation);
-	}
-
-	scanf("%f", &right);
-
-	// Zero division check
-	if(operation[0] == '/' && right == 0) {
-		do {
-			puts("Cannot divide by 0... Enter different number");
-			scanf("%f", &right);
+	pid = getpid();
+	serialize(0, 0, "", pid);
+	send(sock, buf, calc_len, 0);
+	char choice;
+	puts("Enter m for monitoring, c for calculator, or Ctrl+C to quit");
+	while (running) {
+		scanf("%c", &choice);
+		if (choice == 'c') {
+			calc_func();
 		}
-		while (right == 0 && operation[0] == '/');
-	}
-	serialize(left, right, operation, pid);
-
-	while( (send(sock, buf, calc_len, 0)) ) {
-		r_len = recv(sock, r_buf, 1024, 0);
-		left = deserialize(&res, r_len, r_buf);
-		printf("= %f\n", left);
-		scanf("%s", operation);
-		if( strcmp("l", operation) == 0 ) {
-			read_from_shm();
-			printf("= %f\n", left);
-			scanf("%s", operation);
+		else if (choice == 'm') {
+			monitor_mode();
 		}
-		scanf("%f", &right);
-
-		// Zero division check
-		if(operation[0] == '/' && right == 0) {
-			do {
-				puts("Cannot divide by 0... Enter different number");
-				scanf("%f", &right);
-			}
-			while (right == 0);
-		}
-
-		serialize(left, right, operation, pid);
 	}
 
 	close(sock);

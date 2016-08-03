@@ -4,5 +4,5 @@
 
 USER_OBJS :=
 
-LIBS := -lprotobuf-c -lrt
+LIBS := -lprotobuf-c -lrt -lpthread
 
