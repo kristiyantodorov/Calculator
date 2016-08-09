@@ -1,6 +1,6 @@
 #include "client.h"
-
-int main() {
+char ip[15];
+int main(int argc, char* argv[]) {
 	signal(SIGINT, handler_interrupt);
 	signal(SIGQUIT, handler_quit);
 	signal(30, notify_conn);
@@ -8,6 +8,7 @@ int main() {
 	signal(16, notify_server_disconn);
 	init_shm();
 	init_sem();
+    strcpy(ip, argv[1]);
 	connected();
 	return EXIT_SUCCESS;
 }
@@ -153,7 +154,7 @@ void connected() {
 	puts("Socket created");
 
 	server.sin_family = AF_INET;
-	server.sin_addr.s_addr = inet_addr("10.185.21.117");
+	server.sin_addr.s_addr = inet_addr(ip);
 	server.sin_port = htons(8888);
 
 	while ((connect(sock, (struct sockaddr*) &server, sizeof(server))) < 0) {
